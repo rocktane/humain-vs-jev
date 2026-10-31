@@ -1,0 +1,9 @@
+[
+  {
+    "id": "paire-01",
+    "images": [
+      {"path":"images/01-a.jpg","origin":"real","source":"URL de la photo originale","credit":"Nom du photographe","license":"Licence et URL des conditions","evidence":"Lien vers la publication originale et preuve de prise de vue"},
+      {"path":"images/01-b.jpg","origin":"generated","source":"Lien vers la génération ou journal local conservé","credit":"Nom de l’auteur","license":"Droits de redistribution applicables","evidence":"Modèle, date, prompt et identifiant de génération"}
+    ]
+  }
+]

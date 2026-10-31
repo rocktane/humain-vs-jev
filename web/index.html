@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#2449ec"><title>Humain vs Jev : qui repère l’image IA ?</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body>
+<header><a class="brand" href="/" aria-label="Humain vs Jev, accueil"><span class="brand-icon">H<span>J</span></span> Humain vs Jev</a></header>
+<main>
+<section id="home" aria-labelledby="title">
+<div class="intro">
+<h1 id="title">Qui repère<br>l’image <span>IA</span> ?</h1>
+<p class="lead">Deux images. Une vraie photo, une création IA. <br>Fais confiance à ton regard, puis découvre celui de Jev.</p>
+<button id="start" class="primary big" disabled>Défier Jev</button>
+<ul class="rules"><li><b>5</b><span>rounds</span></li><li><b>1</b><span>point par bonne réponse</span></li><li><b>0</b><span>indice</span></li></ul>
+<p id="availability" class="fine" hidden></p>
+</div>
+<div class="showcase-wrap"><div class="showcase" aria-hidden="true">
+<figure class="print print-a"><img id="teaser-0" alt=""><figcaption>A</figcaption></figure>
+<figure class="print print-b"><span class="print-photo"><img id="teaser-1" alt=""><span class="lens" id="lens"><span class="lens-handle"></span><span id="lens-view"></span><span class="lens-glare"></span></span></span><figcaption>B</figcaption></figure>
+</div></div>
+</section>
+<section id="game" hidden aria-labelledby="round-title">
+<div class="roundbar"><div><p class="step"><span id="progress">Round 1 / 5</span> · <span id="jev-status" role="status">Jev cherche…</span></p><h1 id="round-title">Quelle image est générée par IA ?</h1></div><div class="scores"><div>Toi <strong id="human-score">0</strong></div><span>vs</span><div>Jev <strong id="jev-score">0</strong></div></div></div>
+<div class="arena">
+<div class="slot"><figure id="card-0"><span class="frame"><img id="image-0" alt="Image A à examiner"><b class="letter">A</b><span class="result-tag" id="tag-0" hidden></span></span><button class="primary" data-choice="0">C’est l’image IA</button></figure></div>
+<div class="slot"><figure id="card-1"><span class="frame"><img id="image-1" alt="Image B à examiner"><b class="letter">B</b><span class="result-tag" id="tag-1" hidden></span></span><button class="primary" data-choice="1">C’est l’image IA</button></figure></div>
+</div>
+<div id="reveal" class="reveal" tabindex="-1"><div><h2 id="reveal-title"></h2><p id="reveal-detail"></p></div><button id="next" class="primary">Round suivant</button></div>
+</section>
+<section id="finish" hidden tabindex="-1"><span class="stamp">Le verdict</span><h1 id="final-title"></h1><div class="final-score"><span>Toi <b id="final-human"></b></span><em>vs</em><span>Jev <b id="final-jev"></b></span></div><p id="final-message"></p><button id="replay" class="primary">Rejouer</button></section>
+<p id="error" class="error" role="alert" hidden></p>
+</main>
+</body></html>

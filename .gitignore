@@ -1,0 +1,27 @@
+# Secrets locaux : seule la configuration d'exemple est versionnée.
+.env
+.env.*
+!.env.example
+
+# Corpus local : images sans licence de redistribution publique.
+/corpus/images/
+/corpus/manifest.json
+/sightengine-images/
+
+# Notes de travail locales.
+/.firecrawl/
+/docs/remaining-work.md
+
+# Binaires et sorties Go.
+/humainvsjev
+*.test
+*.out
+/dist/
+
+# Outils et systèmes.
+__pycache__/
+.claude/settings.local.json
+.DS_Store
+.playwright-mcp/
+.idea/
+.vscode/
