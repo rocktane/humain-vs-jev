@@ -67,16 +67,15 @@ type Game struct {
 	Expires              time.Time
 	Stats                *Stats
 	Calls                chan struct{}      // sémaphore global des appels TypeSafe, nil : sans limite
+	Budget               *Budget            // appels TypeSafe du jour, nil : sans limite
 	cancel               context.CancelFunc // annule l'analyse du round en cours
 }
 
-// stop annule l'analyse en cours d'une partie remplacée ou expirée, et renvoie le nombre
-// de rounds jamais lancés, dont les appels réservés peuvent être rendus au budget. Appelé avec g.mu.
-func (g *Game) stop() int {
+// stop annule l'analyse en cours d'une partie remplacée ou expirée. Appelé avec g.mu.
+func (g *Game) stop() {
 	if g.cancel != nil {
 		g.cancel()
 	}
-	return len(g.Pairs) - 1 - g.Index
 }
 
 func (g *Game) settle() {
@@ -110,6 +109,12 @@ func (g *Game) choose(id string, choice int) error {
 func (g *Game) start(analyzer Analyzer, timeout time.Duration) {
 	r := &Round{ID: token(), Pair: shufflePair(g.Pairs[g.Index], randomN(2) == 1), ImageIDs: [2]string{token(), token()}, Started: time.Now(), Player: -1, Jev: -1}
 	g.Round = r
+	if !g.Budget.reserve(2) {
+		// Quota du jour atteint en cours de partie : le round se joue sans Jev.
+		log.Printf("analyse %s : quota quotidien atteint, round sans Jev", r.ID)
+		r.Unavailable, r.Done = true, true
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	g.cancel = cancel
 	calls := g.Calls

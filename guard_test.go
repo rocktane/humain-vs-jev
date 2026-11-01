@@ -32,6 +32,12 @@ func TestClientIPTrustsOnlyLocalProxy(t *testing.T) {
 	if got := clientIP(r, false); got != "127.0.0.1" {
 		t.Fatalf("proxy non fiable: %s", got)
 	}
+	r.Header.Del("X-Forwarded-For")
+	r.Header.Add("X-Forwarded-For", "203.0.113.9")
+	r.Header.Add("X-Forwarded-For", "6.6.6.6")
+	if got := clientIP(r, true); got != "6.6.6.6" {
+		t.Fatalf("en-tête sur plusieurs lignes: %s", got)
+	}
 	r.RemoteAddr = "198.51.100.4:5555"
 	if got := clientIP(r, true); got != "198.51.100.4" {
 		t.Fatalf("X-Forwarded-For accepté hors boucle locale: %s", got)
@@ -80,10 +86,6 @@ func TestBudgetReserveRefundAndDay(t *testing.T) {
 	if !b.reserve(10) || !b.reserve(10) || b.reserve(10) || !b.exhausted(10) {
 		t.Fatal("plafond non respecté")
 	}
-	b.refund(8)
-	if !b.reserve(8) || b.reserve(1) {
-		t.Fatal("remboursement faux")
-	}
 	now = now.Add(2 * time.Hour)
 	if b.exhausted(10) || !b.reserve(20) {
 		t.Fatal("budget non remis à zéro le lendemain")
@@ -121,7 +123,7 @@ func TestGamesRateLimitedPerIP(t *testing.T) {
 	}
 }
 
-// Une partie remplacée rend au budget ses rounds jamais lancés, et son analyse est annulée.
+// Une partie remplacée annule son analyse, et seuls les rounds lancés consomment le budget.
 func TestReplacedGameCancelledAndRefunded(t *testing.T) {
 	cancelled := make(chan struct{}, 1)
 	a := &App{Games: map[string]*Game{}, Corpus: testPairs(), Analyzer: analyzerFunc(func(ctx context.Context, _ []byte) (Estimate, error) {
@@ -145,7 +147,7 @@ func TestReplacedGameCancelledAndRefunded(t *testing.T) {
 	}
 	first := post("")
 	c := first.Result().Cookies()[0]
-	// Sans remboursement, la 2e partie dépasserait le budget de 20 (10 + 10) puis la 3e échouerait.
+	// Réserver la partie entière bloquerait le budget de 20 dès la 3e partie ; ici chaque partie ne prend que 2 appels.
 	for i := 0; i < 3; i++ {
 		w := post(c.Name + "=" + c.Value)
 		if w.Code != 200 {
@@ -213,5 +215,25 @@ func TestConcurrentCallsBounded(t *testing.T) {
 	}
 	if peak.Load() > 3 || peak.Load() == 0 {
 		t.Fatalf("pic d'appels simultanés: %d", peak.Load())
+	}
+}
+
+// Quota atteint en cours de partie : le round suivant se joue sans Jev, sans appel.
+func TestRoundWithoutBudgetSkipsJev(t *testing.T) {
+	var calls atomic.Int32
+	a := analyzerFunc(func(context.Context, []byte) (Estimate, error) { calls.Add(1); return Estimate{0.5, "m"}, nil })
+	b := newBudget(2)
+	g := &Game{Pairs: testPairs()[:2], Budget: b}
+	g.mu.Lock()
+	g.start(a, time.Second)
+	g.mu.Unlock()
+	time.Sleep(50 * time.Millisecond)
+	g.mu.Lock()
+	g.Index++
+	g.start(a, time.Second)
+	r := g.Round
+	g.mu.Unlock()
+	if !r.Done || !r.Unavailable || calls.Load() != 2 {
+		t.Fatalf("round sans budget: done=%v unavailable=%v appels=%d", r.Done, r.Unavailable, calls.Load())
 	}
 }

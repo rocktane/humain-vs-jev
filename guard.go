@@ -40,10 +40,10 @@ func clientIP(r *http.Request, trustProxy bool) string {
 	}
 	ip := net.ParseIP(host)
 	if trustProxy && ip != nil && ip.IsLoopback() {
-		if parts := strings.Split(r.Header.Get("X-Forwarded-For"), ","); parts[len(parts)-1] != "" {
-			if fwd := net.ParseIP(strings.TrimSpace(parts[len(parts)-1])); fwd != nil {
-				ip = fwd
-			}
+		// Toutes les lignes de l'en-tête comptent : la dernière entrée est celle du proxy.
+		parts := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+		if fwd := net.ParseIP(strings.TrimSpace(parts[len(parts)-1])); fwd != nil {
+			ip = fwd
 		}
 	}
 	if ip == nil {
@@ -124,7 +124,8 @@ func (b *Budget) roll() {
 	}
 }
 
-// reserve réserve n appels, ou aucun s'il n'en reste pas assez.
+// reserve réserve n appels, ou aucun s'il n'en reste pas assez. Chaque round réserve
+// ses deux appels au moment où il commence : une partie abandonnée ne bloque rien.
 func (b *Budget) reserve(n int) bool {
 	if b == nil || b.Max <= 0 {
 		return true
@@ -137,17 +138,6 @@ func (b *Budget) reserve(n int) bool {
 	}
 	b.used += n
 	return true
-}
-
-// refund rend les appels réservés mais jamais lancés (partie abandonnée).
-func (b *Budget) refund(n int) {
-	if b == nil || b.Max <= 0 || n <= 0 {
-		return
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.roll()
-	b.used = max(0, b.used-n)
 }
 
 // exhausted dit s'il ne reste pas de quoi jouer une partie complète.

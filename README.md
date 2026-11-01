@@ -50,7 +50,7 @@ Chaque round déclenche deux appels à TypeSafe, soit dix par partie complète. 
 
 Pour limiter la facture d’un serveur public :
 
-- chaque partie réserve ses dix appels dans le budget du jour dès son lancement ; une partie abandonnée rend ceux de ses rounds jamais commencés. Une fois le budget atteint, l’accueil l’indique et plus aucune partie ne démarre jusqu’au lendemain. Le budget est en mémoire : un redémarrage le remet à zéro ;
+- chaque round prend ses deux appels dans le budget du jour au moment où il commence, donc une partie abandonnée ne bloque rien. Une partie ne démarre que s’il reste de quoi la jouer entière ; sinon l’accueil annonce le quota atteint jusqu’au lendemain. Si le quota tombe en cours de partie, les rounds restants se jouent sans Jev. Le budget est en mémoire : un redémarrage le remet à zéro ;
 - une même adresse IP ne peut lancer que `GAMES_PER_HOUR` parties par heure ;
 - une partie remplacée par une nouvelle annule ses analyses en cours ;
 - les requêtes dont l’en-tête `Host` n’est ni local ni dans `PUBLIC_HOST` sont refusées (421), ce qui bloque le DNS rebinding.
