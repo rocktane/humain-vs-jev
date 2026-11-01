@@ -63,7 +63,9 @@ type Game struct {
 	Round                *Round
 	HumanScore, JevScore int
 	UnavailableRounds    int
+	HumanMS, JevMS       int64 // cumulated answer times, for stats
 	Expires              time.Time
+	Stats                *Stats
 }
 
 func (g *Game) settle() {
@@ -72,12 +74,17 @@ func (g *Game) settle() {
 		return
 	}
 	g.HumanScore += points(r.Player, r.Pair.Truth)
+	g.HumanMS += r.PlayerMS
+	g.JevMS += r.TotalMS
 	if !r.Unavailable {
 		g.JevScore += points(r.Jev, r.Pair.Truth)
 	} else {
 		g.UnavailableRounds++
 	}
 	r.Scored = true
+	if g.Index == len(g.Pairs)-1 {
+		g.Stats.record(g)
+	}
 }
 func (g *Game) choose(id string, choice int) error {
 	r := g.Round

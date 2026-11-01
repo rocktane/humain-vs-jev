@@ -28,6 +28,7 @@ type App struct {
 	Teaser   [][]byte
 	Analyzer Analyzer
 	Timeout  time.Duration
+	Stats    *Stats
 }
 
 func env(key, fallback string) string {
@@ -61,7 +62,11 @@ func main() {
 	if err != nil || timeout <= 0 || timeout > time.Minute {
 		log.Fatal("JEV_TIMEOUT doit être > 0 et <= 1m")
 	}
-	app := &App{Games: map[string]*Game{}, Corpus: corpus, Teaser: teaserImages(corpus), Timeout: timeout}
+	stats, err := loadStats(env("STATS_FILE", "stats.json"))
+	if err != nil {
+		log.Fatal("Statistiques: ", err)
+	}
+	app := &App{Games: map[string]*Game{}, Corpus: corpus, Teaser: teaserImages(corpus), Timeout: timeout, Stats: stats}
 	if key := os.Getenv("TYPESAFE_API_KEY"); key != "" {
 		app.Analyzer = &TypeSafe{key, env("TYPESAFE_MODEL", "jev-1.14.0"), typesafeEndpoint, &http.Client{Timeout: timeout}}
 	}
@@ -119,7 +124,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"live": a.Analyzer != nil && len(a.Corpus) >= 5, "hasKey": a.Analyzer != nil, "pairs": len(a.Corpus)})
+		writeJSON(w, map[string]any{"live": a.Analyzer != nil && len(a.Corpus) >= 5, "hasKey": a.Analyzer != nil, "pairs": len(a.Corpus), "stats": a.Stats.snapshot()})
 	})
 	mux.HandleFunc("POST /api/games", func(w http.ResponseWriter, r *http.Request) {
 		var in struct{}
@@ -151,7 +156,7 @@ func (a *App) handler() http.Handler {
 			j := randomN(i + 1)
 			pool[i], pool[j] = pool[j], pool[i]
 		}
-		g := &Game{ID: token(), Pairs: pool[:5], Expires: time.Now().Add(2 * time.Hour)}
+		g := &Game{ID: token(), Pairs: pool[:5], Expires: time.Now().Add(2 * time.Hour), Stats: a.Stats}
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		g.start(a.Analyzer, a.Timeout)

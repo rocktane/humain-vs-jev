@@ -37,6 +37,7 @@ Le serveur charge `.env` à la racine du projet. Les variables déjà définies 
 | `JEV_TIMEOUT` | `20s` | Délai maximal par analyse (1 min au plus) |
 | `ADDR` | `127.0.0.1:8080` | Adresse d’écoute |
 | `CORPUS_MANIFEST` | `corpus/manifest.json` | Manifeste des paires d’images |
+| `STATS_FILE` | `stats.json` | Fichier des statistiques cumulées affichées sur l’accueil |
 
 La clé n’est jamais envoyée au navigateur. Ne placez aucun secret dans `web/` : ce dossier est incorporé au binaire.
 
@@ -80,7 +81,7 @@ jeu.example.com {
 }
 ```
 
-Les parties sont en mémoire : redémarrer le service efface les parties en cours.
+Les parties sont en mémoire : redémarrer le service efface les parties en cours. Les statistiques de l’accueil, elles, sont écrites dans `STATS_FILE` à chaque partie terminée : le dossier doit être accessible en écriture au service.
 
 ## Fonctionnement
 
@@ -88,6 +89,7 @@ Les parties sont en mémoire : redémarrer le service efface les parties en cour
 - `corpus.go` : lecture, validation et normalisation du manifeste.
 - `game.go` : état d’une partie, tirage et mélange des paires, scores, vue publique sans fuite de la réponse.
 - `typesafe.go` : client HTTP de l’API TypeSafe et validation stricte des réponses.
+- `stats.go` : statistiques cumulées, enregistrées dans un fichier JSON.
 - `web/` : l’interface.
 
 Pour suivre le code : `POST /api/games` → `Game.start` → deux goroutines, une par image → canal de résultats → `Game.view`. Un `sync.Mutex` protège le choix, les points et le changement de round, et chaque round a un identifiant propre pour qu’une réponse tardive n’affecte pas le suivant.
@@ -95,6 +97,8 @@ Pour suivre le code : `POST /api/games` → `Game.start` → deux goroutines, un
 Jev reçoit la même question pour chaque image, isolément : « cette image est-elle générée par IA ? ». Il désigne l’image qui obtient l’estimation la plus haute. En cas d’égalité exacte, il s’abstient. Si un appel échoue, aucun choix n’est inventé pour Jev, et la partie est signalée comme incomplète.
 
 Le temps du joueur est mesuré par le serveur, chargement des images et réseau compris. Le temps de Jev est la durée réelle des deux appels lancés en parallèle.
+
+L’accueil affiche des statistiques cumulées, tous joueurs confondus : nombre de parties, victoires, taux de bonnes réponses et temps moyen par réponse, humains contre Jev. Seules les parties terminées où Jev a répondu aux cinq rounds sont comptées. Aucune donnée par joueur n’est conservée. Une partie compte dès la fin de son dernier round. L’accueil relit les stats toutes les 20 secondes tant qu’il est affiché, et dès qu’on revient sur l’onglet. Un fichier de statistiques illisible bloque le démarrage, pour ne jamais écraser l’historique.
 
 Le détail du contrat d’API est dans [docs/typesafe-contract.md](docs/typesafe-contract.md).
 

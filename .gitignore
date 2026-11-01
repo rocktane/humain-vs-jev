@@ -25,3 +25,6 @@ __pycache__/
 .playwright-mcp/
 .idea/
 .vscode/
+
+# Statistiques cumulées des parties.
+/stats.json

@@ -89,15 +89,49 @@ function finish() {
  $('finish').focus();
 }
 $('replay').onclick = start;
-function leave() { epoch++; clearTimeout(poll); screen('home'); $('error').hidden=true; $('start').focus(); if ($('teaser-1').complete) animateLens($('teaser-1')); }
+function leave() { epoch++; clearTimeout(poll); screen('home'); config(); $('error').hidden=true; $('start').focus(); if ($('teaser-1').complete) animateLens($('teaser-1')); }
 async function config() {
  try {
   const c=await api('config'); $('start').disabled=!c.live;
   $('availability').hidden = c.live;
   $('availability').textContent = 'Jev indisponible : ' + [c.hasKey ? '' : 'clé TypeSafe absente.', c.pairs<5 ? 'Il faut au moins 5 paires d’images.' : ''].filter(Boolean).join(' ');
+  renderStats(c.stats);
  } catch(err){showError(err);}
 }
+// Stats cumulées des parties complètes, tous joueurs confondus.
+// Le meilleur chiffre de chaque ligne reçoit une pastille ; aucune en cas d'égalité.
+function renderStats(s) {
+ $('stats').hidden = !s || !s.games;
+ if ($('stats').hidden) return;
+ const n = v => v.toLocaleString('fr-FR');
+ const pct = v => Math.round(100 * v / s.rounds);
+ const avg = ms => ms / s.rounds;
+ $('stat-games').textContent = n(s.games);
+ const rows = [
+  ['wins', s.humanWins, s.jevWins, n, 1],
+  ['correct', pct(s.humanCorrect), pct(s.jevCorrect), v => `${v} %`, 1],
+  ['time', avg(s.humanMs), avg(s.jevMs), v => `${(v / 1000).toLocaleString('fr-FR', {minimumFractionDigits: 1, maximumFractionDigits: 1})} s`, -1],
+ ];
+ for (const [key, human, jev, format, better] of rows) {
+  // Compare les valeurs affichées, pour ne pas souligner un écart invisible.
+  const shown = [format(human), format(jev)], lead = (human - jev) * better;
+  ['human', 'jev'].forEach((side, i) => {
+   const cell = $(`stat-${side}-${key}`), span = document.createElement('span');
+   span.textContent = shown[i];
+   cell.replaceChildren(span);
+   cell.classList.toggle('best', shown[0] !== shown[1] && (i === 0 ? lead > 0 : lead < 0));
+  });
+ }
+}
 config();
+// Quasi temps réel sans WebSocket : l'accueil relit les stats toutes les 20 s tant qu'il est
+// visible, et tout de suite au retour sur l'onglet. Une erreur réseau ici reste silencieuse.
+async function refreshStats() {
+ if ($('home').hidden || document.hidden) return;
+ try { renderStats((await api('config')).stats); } catch {}
+}
+setInterval(refreshStats, 20000);
+document.addEventListener('visibilitychange', refreshStats);
 // Accueil : deux images du corpus, sans leur origine. La loupe se promène sur la seconde
 // et montre, agrandi, le point exact qu'elle survole.
 const ZOOM = 2.6;
