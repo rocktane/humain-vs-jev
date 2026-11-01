@@ -144,8 +144,9 @@ func (a *App) session(r *http.Request) *Game {
 }
 
 // drop retire une partie et annule son analyse en cours. Appelé avec a.mu.
-func (a *App) drop(id string, g *Game) {
+func (a *App) drop(id string, g *Game, why string) {
 	g.mu.Lock()
+	g.abandon(why)
 	g.stop()
 	g.mu.Unlock()
 	delete(a.Games, id)
@@ -190,12 +191,12 @@ func (a *App) handler() http.Handler {
 		defer a.mu.Unlock()
 		for id, g := range a.Games {
 			if time.Now().After(g.Expires) {
-				a.drop(id, g)
+				a.drop(id, g, "expirée")
 			}
 		}
 		if c, err := r.Cookie("game"); err == nil {
 			if g := a.Games[c.Value]; g != nil {
-				a.drop(c.Value, g)
+				a.drop(c.Value, g, "nouvelle partie lancée")
 			}
 		}
 		if len(a.Games) >= 200 {
@@ -212,11 +213,12 @@ func (a *App) handler() http.Handler {
 			j := randomN(i + 1)
 			pool[i], pool[j] = pool[j], pool[i]
 		}
-		g := &Game{ID: token(), Pairs: pool[:5], Expires: time.Now().Add(2 * time.Hour), Stats: a.Stats, Calls: a.Calls, Budget: a.Budget, Health: a.Health}
+		g := &Game{ID: token(), Tag: token()[:8], Pairs: pool[:5], Expires: time.Now().Add(2 * time.Hour), Stats: a.Stats, Calls: a.Calls, Budget: a.Budget, Health: a.Health}
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		g.start(a.Analyzer, a.Timeout)
 		a.Games[g.ID] = g
+		log.Printf("partie %s démarrée (%d en cours)", g.Tag, len(a.Games))
 		http.SetCookie(w, &http.Cookie{Name: "game", Value: g.ID, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secureRequest(r, a.TrustProxy), MaxAge: 7200})
 		writeJSON(w, g.view())
 	})

@@ -37,10 +37,12 @@ type Stats struct {
 func loadStats(path string) (*Stats, error) {
 	s := &Stats{path: path}
 	if path == "" {
+		log.Print("stats : STATS_FILE vide, statistiques en mémoire seulement")
 		return s, nil
 	}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
+		log.Printf("stats : %s absent, départ à zéro", path)
 		return s, nil
 	}
 	if err != nil {
@@ -49,6 +51,8 @@ func loadStats(path string) (*Stats, error) {
 	if err := json.Unmarshal(b, &s.data); err != nil {
 		return nil, fmt.Errorf("%s illisible: %w", path, err)
 	}
+	d := s.data
+	log.Printf("stats : %s chargé, %d parties (humains %d, Jev %d, nuls %d)", path, d.Games, d.HumanWins, d.JevWins, d.Ties)
 	return s, nil
 }
 
@@ -61,11 +65,12 @@ func (s *Stats) snapshot() StatsData {
 	return s.data
 }
 
-// record adds one finished game. Called once per game, with g.mu held.
+// record adds one finished game and returns the new game count, 0 if the game
+// was not counted. Called once per game, with g.mu held.
 // A game where Jev failed on any round is not a fair duel and is ignored.
-func (s *Stats) record(g *Game) {
+func (s *Stats) record(g *Game) int {
 	if s == nil || g.UnavailableRounds > 0 {
-		return
+		return 0
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -85,8 +90,9 @@ func (s *Stats) record(g *Game) {
 		d.Ties++
 	}
 	if err := s.save(); err != nil {
-		log.Printf("stats: %v", err)
+		log.Printf("stats : écriture de %s impossible, partie gardée en mémoire seulement : %v", s.path, err)
 	}
+	return d.Games
 }
 
 // save writes atomically: a crash mid-write leaves the previous file intact.
