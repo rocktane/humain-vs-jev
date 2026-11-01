@@ -132,16 +132,21 @@ body.in-game main{display:flex;flex-direction:column;padding:14px 4vw 16px}
  .rules{margin-bottom:24px}
  .stats{margin-top:22px}
 }
+/* Mobile et tablette en portrait : accueil empilé, les photos prennent toute la hauteur libre
+   au-dessus du texte, qui occupe toute la largeur. */
+@media(max-width:760px),(max-width:1100px) and (orientation:portrait){
+ body:has(#home:not([hidden])) main{flex-direction:column;align-items:stretch;padding-top:12px;padding-bottom:20px}
+ /* align-items:stretch : sans lui, le bloc texte garde le centrage de la grille et se rétrécit. */
+ #home{flex:1 1 0px;min-height:0;display:flex;flex-direction:column;align-items:stretch;gap:20px}
+ .showcase-wrap{order:-1;flex:1 1 0px;min-height:150px;align-self:stretch;display:grid;place-items:center;container-type:size}
+ .showcase{width:min(100cqw,100cqh / .92,620px);max-height:none}
+ #home h1{font-size:clamp(40px,13.5vw,96px)}
+ .primary.big{width:100%}
+ .stats{max-width:none}
+}
 @media(max-width:760px){
  main{padding-top:24px}
  header{padding-top:16px}
- /* Mobile : les photos prennent toute la hauteur libre au-dessus du texte. */
- body:has(#home:not([hidden])) main{flex-direction:column;align-items:stretch;padding-top:12px;padding-bottom:20px}
- #home{flex:1 1 0px;min-height:0;display:flex;flex-direction:column}
- .showcase-wrap{order:-1;flex:1 1 0px;min-height:150px;align-self:stretch;display:grid;place-items:center;container-type:size}
- .primary.big{width:100%}
- #home{grid-template-columns:1fr;gap:20px}
- .showcase{width:min(100cqw,100cqh / .92,520px);max-height:none}
  .print{padding:6px 6px 0}
  .print figcaption{padding:4px 2px 6px;font-size:13px}
  #home h1{margin-bottom:14px}
