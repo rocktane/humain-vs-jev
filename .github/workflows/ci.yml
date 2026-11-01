@@ -14,7 +14,7 @@ jobs:
     name: Vérifications
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # go.mod fixe la version minimale ; on teste et on compile avec la dernière
       # version stable pour profiter des correctifs de sécurité de la bibliothèque standard.
