@@ -48,6 +48,7 @@ type Round struct {
 	PlayerMS    int64
 	Done        bool
 	Unavailable bool
+	Reason      string // cause de l'indisponibilité de Jev, voir ReasonTimeout…
 	Jev         int
 	Values      [2]float64
 	Models      [2]string
@@ -112,7 +113,7 @@ func (g *Game) start(analyzer Analyzer, timeout time.Duration) {
 	if !g.Budget.reserve(2) {
 		// Quota du jour atteint en cours de partie : le round se joue sans Jev.
 		log.Printf("analyse %s : quota quotidien atteint, round sans Jev", r.ID)
-		r.Unavailable, r.Done = true, true
+		r.Unavailable, r.Done, r.Reason = true, true, ReasonBudget
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -123,7 +124,7 @@ func (g *Game) start(analyzer Analyzer, timeout time.Duration) {
 		var values [2]float64
 		var models [2]string
 		var times [2]int64
-		failed := false
+		failed, reason := false, ""
 		defer cancel()
 		type result struct {
 			Index    int
@@ -154,6 +155,9 @@ func (g *Game) start(analyzer Analyzer, timeout time.Duration) {
 			models[out.Index] = out.Estimate.Model
 			times[out.Index] = out.MS
 			if out.Err != nil {
+				if !failed {
+					reason = reasonOf(out.Err)
+				}
 				failed = true
 				log.Printf("analyse %s appel %d: %v", r.ID, out.Index+1, out.Err)
 			}
@@ -169,6 +173,7 @@ func (g *Game) start(analyzer Analyzer, timeout time.Duration) {
 		r.CallMS = times
 		r.TotalMS = elapsed
 		r.Unavailable = failed
+		r.Reason = reason
 		r.Done = true
 		if !failed {
 			r.Jev = selectJev(values[0], values[1])
@@ -182,6 +187,7 @@ type Reveal struct {
 	Player      int           `json:"player"`
 	Jev         int           `json:"jev"`
 	Unavailable bool          `json:"unavailable"`
+	Reason      string        `json:"reason,omitempty"`
 	HumanPoints int           `json:"humanPoints"`
 	JevPoints   int           `json:"jevPoints"`
 	PlayerMS    int64         `json:"playerMs"`
@@ -208,7 +214,7 @@ func (g *Game) view() View {
 	r := g.Round
 	v := View{RoundID: r.ID, Number: g.Index + 1, Images: [2]string{"/images/" + r.ImageIDs[0], "/images/" + r.ImageIDs[1]}, Chosen: r.Player >= 0, Ready: r.Done, HumanScore: g.HumanScore, JevScore: g.JevScore, UnavailableRounds: g.UnavailableRounds}
 	if r.Scored {
-		rev := &Reveal{Truth: r.Pair.Truth, Player: r.Player, Jev: r.Jev, Unavailable: r.Unavailable, HumanPoints: points(r.Player, r.Pair.Truth), PlayerMS: r.PlayerMS, TotalMS: r.TotalMS, CallMS: r.CallMS, Models: r.Models}
+		rev := &Reveal{Truth: r.Pair.Truth, Player: r.Player, Jev: r.Jev, Unavailable: r.Unavailable, Reason: r.Reason, HumanPoints: points(r.Player, r.Pair.Truth), PlayerMS: r.PlayerMS, TotalMS: r.TotalMS, CallMS: r.CallMS, Models: r.Models}
 		if !r.Unavailable {
 			rev.JevPoints = points(r.Jev, r.Pair.Truth)
 			rev.Values = &r.Values

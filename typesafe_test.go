@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -59,8 +61,42 @@ func TestTypeSafeHTTPError(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(429); w.Write([]byte("secret response")) }))
 	defer s.Close()
 	c := &TypeSafe{"k", "m", s.URL, s.Client()}
-	if _, err := c.Analyze(context.Background(), nil); err == nil || err.Error() != "TypeSafe HTTP 429" {
+	_, err := c.Analyze(context.Background(), nil)
+	if err == nil || strings.Contains(err.Error(), "secret") || reasonOf(err) != ReasonQuota {
 		t.Fatalf("%v", err)
+	}
+}
+
+// Chaque statut et chaque panne donnent une cause précise, jamais le corps de la réponse.
+func TestTypeSafeErrorReasons(t *testing.T) {
+	for status, want := range map[int]string{401: ReasonAuth, 403: ReasonAuth, 402: ReasonQuota, 429: ReasonQuota, 500: ReasonServer, 503: ReasonServer, 400: ReasonRejected, 413: ReasonRejected} {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(status) }))
+		_, err := (&TypeSafe{"k", "m", s.URL, s.Client()}).Analyze(context.Background(), nil)
+		s.Close()
+		if reasonOf(err) != want {
+			t.Errorf("HTTP %d: %v, attendu %s", status, err, want)
+		}
+	}
+	for body, want := range map[string]string{`pas du json`: ReasonInvalid, `{"model":"m","answers":{}}`: ReasonInvalid, `{"model":"m","answers":{"generated":{"type":"noul","noul":"0.5"}}}`: ReasonInvalid, `{"model":"m","answers":{"generated":{"type":"noul","noul":1.5}}}`: ReasonInvalid} {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, body) }))
+		_, err := (&TypeSafe{"k", "m", s.URL, s.Client()}).Analyze(context.Background(), nil)
+		s.Close()
+		if reasonOf(err) != want {
+			t.Errorf("%s: %v", body, err)
+		}
+	}
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	url := s.URL
+	s.Close()
+	if _, err := (&TypeSafe{"k", "m", url, http.DefaultClient}).Analyze(context.Background(), nil); reasonOf(err) != ReasonNetwork {
+		t.Errorf("serveur fermé: %v", err)
+	}
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.Copy(io.Discard, r.Body); <-r.Context().Done() }))
+	defer slow.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := (&TypeSafe{"k", "m", slow.URL, slow.Client()}).Analyze(ctx, nil); reasonOf(err) != ReasonTimeout {
+		t.Errorf("délai: %v", err)
 	}
 }
 func TestTypeSafeCancellation(t *testing.T) {
