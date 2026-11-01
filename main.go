@@ -141,12 +141,11 @@ func (a *App) session(r *http.Request) *Game {
 	return g
 }
 
-// drop retire une partie, annule son analyse et rend au budget les appels jamais lancés. Appelé avec a.mu.
+// drop retire une partie et annule son analyse en cours. Appelé avec a.mu.
 func (a *App) drop(id string, g *Game) {
 	g.mu.Lock()
-	unused := g.stop()
+	g.stop()
 	g.mu.Unlock()
-	a.Budget.refund(2 * unused)
 	delete(a.Games, id)
 }
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -197,8 +196,8 @@ func (a *App) handler() http.Handler {
 			fail(w, 503, "Plateau complet, réessaie plus tard.")
 			return
 		}
-		// Toute la partie est réservée d'avance : un round commencé ne manque jamais de budget.
-		if !a.Budget.reserve(callsPerGame) {
+		// Une partie ne démarre que s'il reste de quoi la jouer entière ; chaque round réserve ensuite ses appels.
+		if a.Budget.exhausted(callsPerGame) {
 			fail(w, 503, "Jev a atteint son quota d’analyses pour aujourd’hui. Reviens demain.")
 			return
 		}
@@ -207,7 +206,7 @@ func (a *App) handler() http.Handler {
 			j := randomN(i + 1)
 			pool[i], pool[j] = pool[j], pool[i]
 		}
-		g := &Game{ID: token(), Pairs: pool[:5], Expires: time.Now().Add(2 * time.Hour), Stats: a.Stats, Calls: a.Calls}
+		g := &Game{ID: token(), Pairs: pool[:5], Expires: time.Now().Add(2 * time.Hour), Stats: a.Stats, Calls: a.Calls, Budget: a.Budget}
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		g.start(a.Analyzer, a.Timeout)
