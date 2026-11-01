@@ -29,6 +29,27 @@ type App struct {
 	Analyzer Analyzer
 	Timeout  time.Duration
 	Stats    *Stats
+
+	Hosts      map[string]bool // Host acceptés ; nil : pas de contrôle (tests)
+	TrustProxy bool            // X-Forwarded-For et -Proto fiables quand la requête vient de la boucle locale
+	Limiter    *RateLimiter    // parties par adresse IP
+	Budget     *Budget         // appels TypeSafe par jour
+	Calls      chan struct{}   // appels TypeSafe simultanés
+}
+
+// callsPerGame : deux images analysées par round, cinq rounds.
+const callsPerGame = 10
+
+func envInt(key string, fallback int) int {
+	s := os.Getenv(key)
+	if s == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		log.Fatalf("%s doit être un entier positif ou nul", key)
+	}
+	return n
 }
 
 func env(key, fallback string) string {
@@ -66,7 +87,16 @@ func main() {
 	if err != nil {
 		log.Fatal("Statistiques: ", err)
 	}
-	app := &App{Games: map[string]*Game{}, Corpus: corpus, Teaser: teaserImages(corpus), Timeout: timeout, Stats: stats}
+	addr := env("ADDR", "127.0.0.1:8080")
+	app := &App{Games: map[string]*Game{}, Corpus: corpus, Teaser: teaserImages(corpus), Timeout: timeout, Stats: stats,
+		Hosts:      allowedHosts(addr, os.Getenv("PUBLIC_HOST")),
+		TrustProxy: os.Getenv("TRUST_PROXY") == "1",
+		Limiter:    newRateLimiter(envInt("GAMES_PER_HOUR", 20), time.Hour),
+		Budget:     newBudget(envInt("DAILY_CALLS", 1000)),
+	}
+	if n := envInt("MAX_CONCURRENT_CALLS", 8); n > 0 {
+		app.Calls = make(chan struct{}, n)
+	}
 	if key := os.Getenv("TYPESAFE_API_KEY"); key != "" {
 		app.Analyzer = &TypeSafe{key, env("TYPESAFE_MODEL", "jev-1.14.0"), typesafeEndpoint, &http.Client{Timeout: timeout}}
 	}
@@ -84,7 +114,6 @@ func main() {
 		log.Printf("Test Jev réussi : modèle %s, estimation %.4f, temps réel %s. Ce test n'est pas un benchmark.", estimate.Model, estimate.Value, elapsed.Round(time.Millisecond))
 		return
 	}
-	addr := env("ADDR", "127.0.0.1:8080")
 	log.Printf("Humain vs Jev sur http://%s (%d paires importées)", addr, len(corpus))
 	server := &http.Server{Addr: addr, Handler: app.handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second}
 	log.Fatal(server.ListenAndServe())
@@ -111,6 +140,15 @@ func (a *App) session(r *http.Request) *Game {
 	}
 	return g
 }
+
+// drop retire une partie, annule son analyse et rend au budget les appels jamais lancés. Appelé avec a.mu.
+func (a *App) drop(id string, g *Game) {
+	g.mu.Lock()
+	unused := g.stop()
+	g.mu.Unlock()
+	a.Budget.refund(2 * unused)
+	delete(a.Games, id)
+}
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, 2048)
 	d := json.NewDecoder(r.Body)
@@ -124,7 +162,8 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"live": a.Analyzer != nil && len(a.Corpus) >= 5, "hasKey": a.Analyzer != nil, "pairs": len(a.Corpus), "stats": a.Stats.snapshot()})
+		exhausted := a.Budget.exhausted(callsPerGame)
+		writeJSON(w, map[string]any{"live": a.Analyzer != nil && len(a.Corpus) >= 5 && !exhausted, "hasKey": a.Analyzer != nil, "pairs": len(a.Corpus), "budgetExhausted": exhausted, "stats": a.Stats.snapshot()})
 	})
 	mux.HandleFunc("POST /api/games", func(w http.ResponseWriter, r *http.Request) {
 		var in struct{}
@@ -136,19 +175,31 @@ func (a *App) handler() http.Handler {
 			fail(w, 409, "Jev indisponible : clé et cinq paires vérifiées nécessaires.")
 			return
 		}
+		if ok, wait := a.Limiter.allow(clientIP(r, a.TrustProxy)); !ok {
+			w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+			fail(w, 429, fmt.Sprintf("Trop de parties lancées. Réessaie dans %d min.", int(wait.Minutes())+1))
+			return
+		}
 		// Only one active game per browser; stale games expire and memory is bounded.
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		for id, g := range a.Games {
 			if time.Now().After(g.Expires) {
-				delete(a.Games, id)
+				a.drop(id, g)
 			}
 		}
 		if c, err := r.Cookie("game"); err == nil {
-			delete(a.Games, c.Value)
+			if g := a.Games[c.Value]; g != nil {
+				a.drop(c.Value, g)
+			}
 		}
 		if len(a.Games) >= 200 {
 			fail(w, 503, "Plateau complet, réessaie plus tard.")
+			return
+		}
+		// Toute la partie est réservée d'avance : un round commencé ne manque jamais de budget.
+		if !a.Budget.reserve(callsPerGame) {
+			fail(w, 503, "Jev a atteint son quota d’analyses pour aujourd’hui. Reviens demain.")
 			return
 		}
 		pool := append([]Pair(nil), pairs...)
@@ -156,12 +207,12 @@ func (a *App) handler() http.Handler {
 			j := randomN(i + 1)
 			pool[i], pool[j] = pool[j], pool[i]
 		}
-		g := &Game{ID: token(), Pairs: pool[:5], Expires: time.Now().Add(2 * time.Hour), Stats: a.Stats}
+		g := &Game{ID: token(), Pairs: pool[:5], Expires: time.Now().Add(2 * time.Hour), Stats: a.Stats, Calls: a.Calls}
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		g.start(a.Analyzer, a.Timeout)
 		a.Games[g.ID] = g
-		http.SetCookie(w, &http.Cookie{Name: "game", Value: g.ID, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil, MaxAge: 7200})
+		http.SetCookie(w, &http.Cookie{Name: "game", Value: g.ID, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: secureRequest(r, a.TrustProxy), MaxAge: 7200})
 		writeJSON(w, g.view())
 	})
 	mux.HandleFunc("GET /api/round", func(w http.ResponseWriter, r *http.Request) {
@@ -251,6 +302,10 @@ func (a *App) handler() http.Handler {
 	files, _ := fs.Sub(frontend, "web")
 	mux.Handle("GET /", http.FileServer(http.FS(files)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.Hosts != nil && !a.Hosts[strings.ToLower(r.Host)] {
+			fail(w, 421, "Hôte inconnu.")
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")

@@ -66,6 +66,17 @@ type Game struct {
 	HumanMS, JevMS       int64 // cumulated answer times, for stats
 	Expires              time.Time
 	Stats                *Stats
+	Calls                chan struct{}      // sémaphore global des appels TypeSafe, nil : sans limite
+	cancel               context.CancelFunc // annule l'analyse du round en cours
+}
+
+// stop annule l'analyse en cours d'une partie remplacée ou expirée, et renvoie le nombre
+// de rounds jamais lancés, dont les appels réservés peuvent être rendus au budget. Appelé avec g.mu.
+func (g *Game) stop() int {
+	if g.cancel != nil {
+		g.cancel()
+	}
+	return len(g.Pairs) - 1 - g.Index
 }
 
 func (g *Game) settle() {
@@ -99,13 +110,15 @@ func (g *Game) choose(id string, choice int) error {
 func (g *Game) start(analyzer Analyzer, timeout time.Duration) {
 	r := &Round{ID: token(), Pair: shufflePair(g.Pairs[g.Index], randomN(2) == 1), ImageIDs: [2]string{token(), token()}, Started: time.Now(), Player: -1, Jev: -1}
 	g.Round = r
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	g.cancel = cancel
+	calls := g.Calls
 	go func() {
 		started := time.Now()
 		var values [2]float64
 		var models [2]string
 		var times [2]int64
 		failed := false
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		type result struct {
 			Index    int
@@ -116,6 +129,15 @@ func (g *Game) start(analyzer Analyzer, timeout time.Duration) {
 		ch := make(chan result, 2)
 		for i := 0; i < 2; i++ {
 			go func(i int) {
+				if calls != nil {
+					select {
+					case calls <- struct{}{}:
+						defer func() { <-calls }()
+					case <-ctx.Done():
+						ch <- result{i, Estimate{}, 0, ctx.Err()}
+						return
+					}
+				}
 				t := time.Now()
 				e, err := analyzer.Analyze(ctx, r.Pair.Images[i].Data)
 				ch <- result{i, e, time.Since(t).Milliseconds(), err}

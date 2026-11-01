@@ -38,10 +38,22 @@ Le serveur charge `.env` à la racine du projet. Les variables déjà définies 
 | `ADDR` | `127.0.0.1:8080` | Adresse d’écoute |
 | `CORPUS_MANIFEST` | `corpus/manifest.json` | Manifeste des paires d’images |
 | `STATS_FILE` | `stats.json` | Fichier des statistiques cumulées affichées sur l’accueil |
+| `PUBLIC_HOST` | aucun | Nom public du site (`jeu.example.com`), plusieurs séparés par des virgules. Sans lui, seules les adresses locales sont acceptées |
+| `TRUST_PROXY` | `0` | `1` derrière un reverse proxy local : l’adresse du visiteur et le HTTPS sont lus dans `X-Forwarded-For` et `X-Forwarded-Proto` |
+| `GAMES_PER_HOUR` | `20` | Parties par heure et par adresse IP (IPv6 par /64), `0` sans limite |
+| `DAILY_CALLS` | `1000` | Appels TypeSafe par jour (UTC), `0` sans limite |
+| `MAX_CONCURRENT_CALLS` | `8` | Appels TypeSafe simultanés, toutes parties confondues, `0` sans limite |
 
 La clé n’est jamais envoyée au navigateur. Ne placez aucun secret dans `web/` : ce dossier est incorporé au binaire.
 
 Chaque round déclenche deux appels à TypeSafe, soit dix par partie complète. Ces appels peuvent être facturés.
+
+Pour limiter la facture d’un serveur public :
+
+- chaque partie réserve ses dix appels dans le budget du jour dès son lancement ; une partie abandonnée rend ceux de ses rounds jamais commencés. Une fois le budget atteint, l’accueil l’indique et plus aucune partie ne démarre jusqu’au lendemain. Le budget est en mémoire : un redémarrage le remet à zéro ;
+- une même adresse IP ne peut lancer que `GAMES_PER_HOUR` parties par heure ;
+- une partie remplacée par une nouvelle annule ses analyses en cours ;
+- les requêtes dont l’en-tête `Host` n’est ni local ni dans `PUBLIC_HOST` sont refusées (421), ce qui bloque le DNS rebinding.
 
 ## Ajouter vos images
 
@@ -72,7 +84,7 @@ Le binaire est statique et contient l’interface. Il se compile depuis n’impo
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/humainvsjev .
 ```
 
-Sur le serveur, il suffit de copier dans un même dossier le binaire, le `.env` et le corpus (`corpus/manifest.json` et `corpus/images/`), puis de lancer le binaire depuis ce dossier, par exemple avec un service systemd. Il écoute sur `ADDR` (`127.0.0.1:8080` par défaut). Placez devant un reverse proxy qui gère le HTTPS, par exemple Caddy :
+Sur le serveur, il suffit de copier dans un même dossier le binaire, le `.env` et le corpus (`corpus/manifest.json` et `corpus/images/`), puis de lancer le binaire depuis ce dossier, par exemple avec un service systemd. Il écoute sur `ADDR` (`127.0.0.1:8080` par défaut). Placez devant un reverse proxy qui gère le HTTPS, et réglez `PUBLIC_HOST=jeu.example.com` et `TRUST_PROXY=1`. Par exemple avec Caddy :
 
 ```
 jeu.example.com {
@@ -90,6 +102,7 @@ Les parties sont en mémoire : redémarrer le service efface les parties en cour
 - `game.go` : état d’une partie, tirage et mélange des paires, scores, vue publique sans fuite de la réponse.
 - `typesafe.go` : client HTTP de l’API TypeSafe et validation stricte des réponses.
 - `stats.go` : statistiques cumulées, enregistrées dans un fichier JSON.
+- `guard.go` : protections du serveur public (hôtes acceptés, limite par adresse IP, budget quotidien d’appels).
 - `web/` : l’interface.
 
 Pour suivre le code : `POST /api/games` → `Game.start` → deux goroutines, une par image → canal de résultats → `Game.view`. Un `sync.Mutex` protège le choix, les points et le changement de round, et chaque round a un identifiant propre pour qu’une réponse tardive n’affecte pas le suivant.
@@ -117,5 +130,5 @@ Les tests couvrent le choix de Jev et les égalités, les scores, le verrouillag
 ## Limites
 
 - L’état des parties est en mémoire : un redémarrage les efface. Sessions de deux heures, 200 au plus.
-- Pas de quota d’appels par visiteur ni d’authentification. Sur un serveur public, n’importe qui peut lancer des parties facturées : ajoutez un mot de passe ou une limite de débit au reverse proxy si besoin.
+- Pas d’authentification : sur un serveur public, n’importe qui peut jouer dans la limite de `GAMES_PER_HOUR` et de `DAILY_CALLS`. Une personne qui dispose de nombreuses adresses IP peut épuiser le budget du jour, sans pouvoir le dépasser.
 - Le serveur écoute en local par défaut.

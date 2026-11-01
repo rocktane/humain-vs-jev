@@ -94,7 +94,9 @@ async function config() {
  try {
   const c=await api('config'); $('start').disabled=!c.live;
   $('availability').hidden = c.live;
-  $('availability').textContent = 'Jev indisponible : ' + [c.hasKey ? '' : 'clé TypeSafe absente.', c.pairs<5 ? 'Il faut au moins 5 paires d’images.' : ''].filter(Boolean).join(' ');
+  $('availability').textContent = c.budgetExhausted && c.hasKey && c.pairs >= 5
+   ? 'Jev a atteint son quota d’analyses pour aujourd’hui. Reviens demain.'
+   : 'Jev indisponible : ' + [c.hasKey ? '' : 'clé TypeSafe absente.', c.pairs<5 ? 'Il faut au moins 5 paires d’images.' : ''].filter(Boolean).join(' ');
   renderStats(c.stats);
  } catch(err){showError(err);}
 }
