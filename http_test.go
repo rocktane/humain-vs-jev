@@ -34,7 +34,7 @@ func TestFullLiveHTTPWithLocalProvider(t *testing.T) {
 			}))
 			defer provider.Close()
 			client := &TypeSafe{Key: "test-only", Model: "local-test", Endpoint: provider.URL, HTTP: provider.Client()}
-			result := exerciseFullGameHTTP(t, client)
+			result, stats := exerciseFullGameHTTP(t, client)
 			if calls.Load() != 10 {
 				t.Fatalf("nombre d'appels: %d", calls.Load())
 			}
@@ -47,14 +47,18 @@ func TestFullLiveHTTPWithLocalProvider(t *testing.T) {
 			if !fail && result.UnavailableRounds != 0 {
 				t.Fatal("faux échec")
 			}
+			// Une partie complète compte ; une partie où Jev a échoué est ignorée.
+			if want := map[bool]int{false: 1, true: 0}[fail]; stats.Games != want || stats.Rounds != 5*want {
+				t.Fatalf("stats: %+v", stats)
+			}
 		})
 	}
 }
 
-func exerciseFullGameHTTP(t *testing.T, analyzer Analyzer) View {
+func exerciseFullGameHTTP(t *testing.T, analyzer Analyzer) (View, StatsData) {
 	t.Helper()
 	// Procedural fixtures exercise routing only; never advertised as verified photos.
-	app := &App{Games: map[string]*Game{}, Corpus: testPairs(), Analyzer: analyzer, Timeout: time.Second}
+	app := &App{Games: map[string]*Game{}, Corpus: testPairs(), Analyzer: analyzer, Timeout: time.Second, Stats: &Stats{}}
 	s := httptest.NewServer(app.handler())
 	defer s.Close()
 	jar, _ := cookiejar.New(nil)
@@ -133,7 +137,16 @@ func exerciseFullGameHTTP(t *testing.T, analyzer Analyzer) View {
 	if v.HumanScore < 0 || v.HumanScore > 5 || v.JevScore < 0 || v.JevScore > 5 {
 		t.Fatal("scores invalides")
 	}
-	return v
+	var config struct{ Stats StatsData }
+	r, err := c.Get(s.URL + "/api/config")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	if err := json.NewDecoder(r.Body).Decode(&config); err != nil {
+		t.Fatal(err)
+	}
+	return v, config.Stats
 }
 func TestCrossOriginRejected(t *testing.T) {
 	a := &App{}
