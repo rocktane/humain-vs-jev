@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,5 +84,22 @@ func TestStatsRecordedWhenJevAnswersLast(t *testing.T) {
 	g.mu.Unlock()
 	if got := stats.snapshot(); got.Games != 1 || got.Rounds != 5 {
 		t.Fatalf("stats: %+v", got)
+	}
+}
+
+// Une partie écartée des stats de l'accueil laisse une trace qui dit pourquoi.
+func TestIncompleteGameLogged(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	stats := &Stats{}
+	g := finishedGame(3, 2, 2)
+	g.Tag, g.Stats, g.Reasons = "abc", stats, []string{ReasonTimeout, ReasonBudget}
+	g.finish()
+	if stats.snapshot().Games != 0 {
+		t.Fatal("partie incomplète comptée")
+	}
+	if got := buf.String(); !strings.Contains(got, "partie abc terminée, humain 3 - Jev 2, non comptée : Jev absent sur 2 round(s) (timeout, budget)") {
+		t.Fatalf("log: %q", got)
 	}
 }

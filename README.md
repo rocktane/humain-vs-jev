@@ -95,6 +95,8 @@ jeu.example.com {
 
 Les parties sont en mémoire : redémarrer le service efface les parties en cours. Les statistiques de l’accueil, elles, sont écrites dans `STATS_FILE` à chaque partie terminée : le dossier doit être accessible en écriture au service.
 
+Chaque partie est tracée dans les logs sous un identifiant court (jamais le cookie) : démarrage, résultat de chaque round, puis fin, comptée ou non. Une partie où Jev a manqué un round reste hors des stats de l’accueil ; le log dit sur combien de rounds et pourquoi (`timeout`, `budget`, `quota`…). Une partie quittée en cours est loguée « abandonnée » quand elle est remplacée ou nettoyée après expiration. Au démarrage, le log indique le fichier de stats chargé et son nombre de parties : un compteur revenu à zéro après un redéploiement signale un `STATS_FILE` hors volume persistant.
+
 ## Fonctionnement
 
 - `main.go` et `dotenv.go` : configuration, routes HTTP, cookie de session opaque, fichiers statiques embarqués.

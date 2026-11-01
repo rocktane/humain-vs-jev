@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"math/big"
+	"strings"
 	"sync"
 	"time"
 )
@@ -59,12 +60,14 @@ type Round struct {
 type Game struct {
 	mu                   sync.Mutex
 	ID                   string
+	Tag                  string // identifiant court pour les logs ; ID est le secret du cookie, jamais logué
 	Pairs                []Pair
 	Index                int
 	Round                *Round
 	HumanScore, JevScore int
 	UnavailableRounds    int
-	HumanMS, JevMS       int64 // cumulated answer times, for stats
+	Reasons              []string // cause de chaque round sans Jev, pour les logs
+	HumanMS, JevMS       int64    // cumulated answer times, for stats
 	Expires              time.Time
 	Stats                *Stats
 	Calls                chan struct{}      // sémaphore global des appels TypeSafe, nil : sans limite
@@ -88,15 +91,48 @@ func (g *Game) settle() {
 	g.HumanScore += points(r.Player, r.Pair.Truth)
 	g.HumanMS += r.PlayerMS
 	g.JevMS += r.TotalMS
+	jev := "Jev absent (" + r.Reason + ")"
 	if !r.Unavailable {
 		g.JevScore += points(r.Jev, r.Pair.Truth)
+		jev = "Jev " + verdict(r.Jev, r.Pair.Truth)
 	} else {
 		g.UnavailableRounds++
+		g.Reasons = append(g.Reasons, r.Reason)
 	}
 	r.Scored = true
+	log.Printf("partie %s round %d/%d : humain %s, %s", g.Tag, g.Index+1, len(g.Pairs), verdict(r.Player, r.Pair.Truth), jev)
 	if g.Index == len(g.Pairs)-1 {
-		g.Stats.record(g)
+		g.finish()
 	}
+}
+
+func verdict(choice, truth int) string {
+	if choice == truth {
+		return "juste"
+	}
+	return "faux"
+}
+
+// finish compte la partie dans les stats de l'accueil, ou explique dans les logs pourquoi elle n'y est pas.
+func (g *Game) finish() {
+	score := fmt.Sprintf("humain %d - Jev %d", g.HumanScore, g.JevScore)
+	if g.UnavailableRounds > 0 {
+		log.Printf("partie %s terminée, %s, non comptée : Jev absent sur %d round(s) (%s)", g.Tag, score, g.UnavailableRounds, strings.Join(g.Reasons, ", "))
+		return
+	}
+	if g.Stats == nil {
+		log.Printf("partie %s terminée, %s, non comptée : stats désactivées", g.Tag, score)
+		return
+	}
+	log.Printf("partie %s terminée, %s, comptée (%d parties au total)", g.Tag, score, g.Stats.record(g))
+}
+
+// abandon logue une partie retirée avant sa fin, qui ne sera donc jamais comptée. Appelé avec g.mu.
+func (g *Game) abandon(why string) {
+	if g.Index == len(g.Pairs)-1 && g.Round != nil && g.Round.Scored {
+		return // déjà terminée et loguée
+	}
+	log.Printf("partie %s abandonnée au round %d/%d (%s), non comptée", g.Tag, g.Index+1, len(g.Pairs), why)
 }
 func (g *Game) choose(id string, choice int) error {
 	r := g.Round
