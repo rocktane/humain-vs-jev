@@ -83,7 +83,12 @@ func TestBudgetReserveRefundAndDay(t *testing.T) {
 	now := time.Date(2026, 1, 1, 23, 0, 0, 0, time.UTC)
 	b := newBudget(20)
 	b.now = func() time.Time { return now }
-	if !b.reserve(10) || !b.reserve(10) || b.reserve(10) || !b.exhausted(10) {
+	for i := 0; i < 2; i++ {
+		if !b.reserve(10) {
+			t.Fatalf("réservation %d refusée sous le plafond", i+1)
+		}
+	}
+	if b.reserve(10) || !b.exhausted(10) {
 		t.Fatal("plafond non respecté")
 	}
 	now = now.Add(2 * time.Hour)

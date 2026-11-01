@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Vérifications
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # go.mod fixe la version minimale ; on teste et on compile avec la dernière
+      # version stable pour profiter des correctifs de sécurité de la bibliothèque standard.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Formatage
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Fichiers à formater avec gofmt :"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: Tests (avec détecteur de courses)
+        run: go test -race ./...
+
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@latest ./...
+
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Syntaxe JavaScript
+        run: node --check web/app.js
+
+      - name: Binaire de production
+        run: GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o dist/humainvsjev .
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: humainvsjev-linux-amd64
+          path: dist/humainvsjev
+          retention-days: 14
+
+  deploy:
+    name: Déploiement
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://humainvsjev.23o.dev
+    concurrency:
+      group: production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: humainvsjev-linux-amd64
+
+      - name: Envoi au serveur
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy ~/.ssh/known_hosts
+          # La clé n'autorise que /usr/local/bin/deploy-humainvsjev, qui lit le binaire sur stdin.
+          ssh -i ~/.ssh/deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "root@$DEPLOY_HOST" < humainvsjev
+
+      - name: Vérification publique
+        run: |
+          for i in $(seq 1 10); do
+            if curl -fsS -o /dev/null --max-time 5 https://humainvsjev.23o.dev/api/config; then
+              echo "Site en ligne"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "Le site ne répond pas"
+          exit 1

@@ -97,6 +97,21 @@ Les parties sont en mémoire : redémarrer le service efface les parties en cour
 
 Chaque partie est tracée dans les logs sous un identifiant court (jamais le cookie) : démarrage, résultat de chaque round, puis fin, comptée ou non. Une partie où Jev a manqué un round reste hors des stats de l’accueil ; le log dit sur combien de rounds et pourquoi (`timeout`, `budget`, `quota`…). Une partie quittée en cours est loguée « abandonnée » quand elle est remplacée ou nettoyée après expiration. Au démarrage, le log indique le fichier de stats chargé et son nombre de parties : un compteur revenu à zéro après un redéploiement signale un `STATS_FILE` hors volume persistant.
 
+### Intégration et déploiement continus
+
+`.github/workflows/ci.yml` vérifie chaque PR : `gofmt`, `go vet`, `go test -race`, `staticcheck`, `govulncheck`, syntaxe de `web/app.js` et compilation du binaire Linux. Aucun appel TypeSafe n’est fait en CI.
+
+Chaque push sur `main`, une fois les vérifications passées, déploie la démo (environnement GitHub `production`) :
+
+1. le binaire compilé est envoyé par SSH sur l’entrée standard ;
+2. la clé de déploiement n’autorise qu’une commande, `deploy/deploy-humainvsjev.sh`, installée sur le serveur dans `/usr/local/bin/deploy-humainvsjev` (`command="…",restrict` dans `authorized_keys`) ;
+3. le script remplace le binaire, garde l’ancien en `humainvsjev.prev`, redémarre le service et revient à l’ancien si `/api/config` ne répond pas ;
+4. le workflow vérifie enfin le site public.
+
+Le `.env`, le corpus et les statistiques restent sur le serveur, la CI n’y touche pas. Un déploiement efface les parties en cours. Après une modification de `deploy/deploy-humainvsjev.sh`, recopiez-le à la main sur le serveur.
+
+Secrets de l’environnement `production` : `DEPLOY_SSH_KEY` (clé privée), `DEPLOY_KNOWN_HOSTS` (empreintes du serveur) et la variable `DEPLOY_HOST`. Un redéploiement manuel se lance depuis l’onglet Actions (`workflow_dispatch`).
+
 ## Fonctionnement
 
 - `main.go` et `dotenv.go` : configuration, routes HTTP, cookie de session opaque, fichiers statiques embarqués.
