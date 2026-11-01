@@ -103,11 +103,20 @@ Les parties sont en mémoire : redémarrer le service efface les parties en cour
 - `typesafe.go` : client HTTP de l’API TypeSafe et validation stricte des réponses.
 - `stats.go` : statistiques cumulées, enregistrées dans un fichier JSON.
 - `guard.go` : protections du serveur public (hôtes acceptés, limite par adresse IP, budget quotidien d’appels).
+- `health.go` : second essai après une erreur passagère, pause de Jev après des refus répétés.
 - `web/` : l’interface.
 
 Pour suivre le code : `POST /api/games` → `Game.start` → deux goroutines, une par image → canal de résultats → `Game.view`. Un `sync.Mutex` protège le choix, les points et le changement de round, et chaque round a un identifiant propre pour qu’une réponse tardive n’affecte pas le suivant.
 
 Jev reçoit la même question pour chaque image, isolément : « cette image est-elle générée par IA ? ». Il désigne l’image qui obtient l’estimation la plus haute. En cas d’égalité exacte, il s’abstient. Si un appel échoue, aucun choix n’est inventé pour Jev, et la partie est signalée comme incomplète.
+
+Gestion des échecs TypeSafe (`typesafe.go`, `health.go`) :
+
+- chaque échec est classé (délai dépassé, réseau, clé refusée, quota, panne serveur, requête rejetée, réponse invalide) et la révélation affiche un message propre à la cause ;
+- une erreur passagère (5xx, réseau, 429) est réessayée une fois, si le délai du round laisse au moins une seconde et si le budget du jour le permet. `Retry-After` est respecté jusqu’à 5 secondes ;
+- après trois refus d’affilée (clé refusée ou requête rejetée), Jev fait une pause de dix minutes : l’accueil l’annonce et aucune partie ne démarre ;
+- un modèle différent de `TYPESAFE_MODEL` dans la réponse est journalisé une fois ;
+- les logs ne gardent du corps d’erreur que son code, s’il ressemble à un identifiant (`invalid_api_key`), jamais de texte libre.
 
 Le temps du joueur est mesuré par le serveur, chargement des images et réseau compris. Le temps de Jev est la durée réelle des deux appels lancés en parallèle.
 

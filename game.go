@@ -69,6 +69,7 @@ type Game struct {
 	Stats                *Stats
 	Calls                chan struct{}      // sémaphore global des appels TypeSafe, nil : sans limite
 	Budget               *Budget            // appels TypeSafe du jour, nil : sans limite
+	Health               *Health            // pause de Jev après des refus répétés, nil : jamais
 	cancel               context.CancelFunc // annule l'analyse du round en cours
 }
 
@@ -118,7 +119,7 @@ func (g *Game) start(analyzer Analyzer, timeout time.Duration) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	g.cancel = cancel
-	calls := g.Calls
+	calls, budget, health := g.Calls, g.Budget, g.Health
 	go func() {
 		started := time.Now()
 		var values [2]float64
@@ -145,7 +146,7 @@ func (g *Game) start(analyzer Analyzer, timeout time.Duration) {
 					}
 				}
 				t := time.Now()
-				e, err := analyzer.Analyze(ctx, r.Pair.Images[i].Data)
+				e, err := analyzeOnce(ctx, analyzer, r.Pair.Images[i].Data, budget, health)
 				ch <- result{i, e, time.Since(t).Milliseconds(), err}
 			}(i)
 		}

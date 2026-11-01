@@ -131,6 +131,7 @@ async function config() {
   $('availability').hidden = c.live;
   $('availability').textContent = c.budgetExhausted && c.hasKey && c.pairs >= 5
    ? 'Jev a atteint son quota d’analyses pour aujourd’hui. Reviens demain.'
+   : c.jevPaused && c.hasKey && c.pairs >= 5 ? 'Jev fait une pause. Réessaie dans quelques minutes.'
    : 'Jev indisponible : ' + [c.hasKey ? '' : 'clé TypeSafe absente.', c.pairs<5 ? 'Il faut au moins 5 paires d’images.' : ''].filter(Boolean).join(' ');
   renderStats(c.stats);
  } catch(err){showError(err);}

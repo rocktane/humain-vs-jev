@@ -35,6 +35,7 @@ type App struct {
 	Limiter    *RateLimiter    // parties par adresse IP
 	Budget     *Budget         // appels TypeSafe par jour
 	Calls      chan struct{}   // appels TypeSafe simultanés
+	Health     *Health         // pause de Jev après des refus répétés
 }
 
 // callsPerGame : deux images analysées par round, cinq rounds.
@@ -93,6 +94,7 @@ func main() {
 		TrustProxy: os.Getenv("TRUST_PROXY") == "1",
 		Limiter:    newRateLimiter(envInt("GAMES_PER_HOUR", 20), time.Hour),
 		Budget:     newBudget(envInt("DAILY_CALLS", 1000)),
+		Health:     newHealth(3, 10*time.Minute),
 	}
 	if n := envInt("MAX_CONCURRENT_CALLS", 8); n > 0 {
 		app.Calls = make(chan struct{}, n)
@@ -161,8 +163,8 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 func (a *App) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/config", func(w http.ResponseWriter, r *http.Request) {
-		exhausted := a.Budget.exhausted(callsPerGame)
-		writeJSON(w, map[string]any{"live": a.Analyzer != nil && len(a.Corpus) >= 5 && !exhausted, "hasKey": a.Analyzer != nil, "pairs": len(a.Corpus), "budgetExhausted": exhausted, "stats": a.Stats.snapshot()})
+		exhausted, paused := a.Budget.exhausted(callsPerGame), a.Health.down()
+		writeJSON(w, map[string]any{"live": a.Analyzer != nil && len(a.Corpus) >= 5 && !exhausted && !paused, "hasKey": a.Analyzer != nil, "pairs": len(a.Corpus), "budgetExhausted": exhausted, "jevPaused": paused, "stats": a.Stats.snapshot()})
 	})
 	mux.HandleFunc("POST /api/games", func(w http.ResponseWriter, r *http.Request) {
 		var in struct{}
@@ -172,6 +174,10 @@ func (a *App) handler() http.Handler {
 		pairs := a.Corpus
 		if a.Analyzer == nil || len(pairs) < 5 {
 			fail(w, 409, "Jev indisponible : clé et cinq paires vérifiées nécessaires.")
+			return
+		}
+		if a.Health.down() {
+			fail(w, 503, "Jev fait une pause. Réessaie dans quelques minutes.")
 			return
 		}
 		if ok, wait := a.Limiter.allow(clientIP(r, a.TrustProxy)); !ok {
@@ -206,7 +212,7 @@ func (a *App) handler() http.Handler {
 			j := randomN(i + 1)
 			pool[i], pool[j] = pool[j], pool[i]
 		}
-		g := &Game{ID: token(), Pairs: pool[:5], Expires: time.Now().Add(2 * time.Hour), Stats: a.Stats, Calls: a.Calls, Budget: a.Budget}
+		g := &Game{ID: token(), Pairs: pool[:5], Expires: time.Now().Add(2 * time.Hour), Stats: a.Stats, Calls: a.Calls, Budget: a.Budget, Health: a.Health}
 		g.mu.Lock()
 		defer g.mu.Unlock()
 		g.start(a.Analyzer, a.Timeout)

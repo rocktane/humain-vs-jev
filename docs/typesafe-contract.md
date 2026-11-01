@@ -48,7 +48,7 @@ JSON/base64 est choisi pour sa simplicité avec une seule image normalisée par 
 }
 ```
 
-Le client vérifie la présence de l’entrée, son type, la valeur numérique dans [0, 1] et l’identifiant du modèle. Les autres champs sont ignorés. Une réponse partielle, invalide, un statut non 200 ou un timeout rendent Jev indisponible pour le round entier. Le corps d’erreur fournisseur n’est jamais journalisé.
+Le client vérifie la présence de l’entrée, son type, la valeur numérique dans [0, 1] et l’identifiant du modèle. Les autres champs sont ignorés. Une réponse partielle, invalide, un statut non 200 ou un timeout rendent Jev indisponible pour le round entier, après un éventuel second essai pour les erreurs passagères (5xx, réseau, 429). Du corps d’erreur fournisseur, seul un code court de forme identifiant est journalisé, jamais le texte.
 
 Les modèles documentés sont `jev-1.14.0` et `jev-1.13.0`. Les alias `jev-latest` et `jev-preview` pointent actuellement sur 1.14.0. `GET /v1/models`, authentifié, liste les noms accessibles au compte ; cet endpoint de liste n’a pas été nécessaire : le modèle fixe a ensuite été confirmé par les réponses réelles. La version fixe par défaut rend la configuration explicite.
 
