@@ -120,7 +120,9 @@ body.in-game main{display:flex;flex-direction:column;padding:14px 4vw 16px}
 #final-message{color:var(--muted)}
 #final-message:empty{display:none}
 
-.error{background:#ffe4e0;color:#922719;padding:16px;border-radius:6px}
+.error{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;background:#ffe4e0;color:#922719;padding:16px;border-radius:6px}
+.error button{padding:6px 14px;border:1px solid #922719;border-radius:999px;background:transparent;color:inherit;font:inherit;font-weight:700;cursor:pointer}
+.error button:hover{background:#922719;color:#fff}
 @keyframes reveal{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
 /* Écrans peu hauts (portables 720 à 820 px) : l'accueil se resserre verticalement. */

@@ -2,20 +2,45 @@
 const $ = id => document.getElementById(id);
 let view, poll, epoch = 0, busy = false, loaded = [false, false], selectedChoice = null;
 const seconds = ms => `${(ms / 1000).toLocaleString('fr-FR', {minimumFractionDigits: 2, maximumFractionDigits: 2})} s`;
-function showError(error) { $('error').textContent = error.message; $('error').hidden = false; }
+// Une erreur « passagère » (suivi du round) disparaît dès que le serveur répond de nouveau.
+// retry propose de relancer une partie quand le joueur serait bloqué.
+let transientError = false;
+function showError(error, {transient = false, retry = false} = {}) {
+ $('error-text').textContent = error.message; $('error-retry').hidden = !retry;
+ $('error').hidden = false; transientError = transient;
+}
+function hideError() { $('error').hidden = true; transientError = false; }
+// Les messages restent en français et lisibles, même quand la réponse n'est pas celle du serveur Go
+// (proxy en panne, réseau coupé, page HTML d'erreur).
 async function api(path, body) {
  const controller = new AbortController();
  const timer = setTimeout(() => controller.abort(), 12000);
+ let res;
  try {
-  const res = await fetch(`/api/${path}`, {signal: controller.signal, ...(body === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})});
-  const data = await res.json();
-  if (!res.ok) { const error = new Error(data.error || 'Le serveur ne répond pas.'); error.status = res.status; throw error; }
-  return data;
+  res = await fetch(`/api/${path}`, {signal: controller.signal, ...(body === undefined ? {} : {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})});
  } catch (err) {
-  if (err.name === 'AbortError') throw new Error('Le serveur met trop de temps à répondre. Réessaie.');
-  throw err;
+  throw new Error(err.name === 'AbortError' ? 'Le serveur met trop de temps à répondre. Réessaie.' : 'Connexion impossible. Vérifie ton réseau et réessaie.');
  } finally { clearTimeout(timer); }
+ let data = null;
+ try { data = await res.json(); } catch {}
+ if (!res.ok || !data) {
+  const fallback = res.status >= 500 ? 'Le serveur est momentanément indisponible. Réessaie dans un instant.' : 'Réponse inattendue du serveur. Recharge la page.';
+  const error = new Error(data && typeof data.error === 'string' ? data.error : fallback);
+  error.status = res.status; throw error;
+ }
+ return data;
 }
+// Pourquoi Jev n'a rien dit sur ce round. Les causes viennent de typesafe.go.
+const JEV_SILENCE = {
+ timeout: 'Jev n’a pas répondu à temps.',
+ quota: 'Jev est débordé et n’a pas pu répondre.',
+ budget: 'Jev a atteint son quota d’analyses pour aujourd’hui.',
+ auth: 'Jev est indisponible pour le moment.',
+ server: 'Jev a eu un souci technique sur ce round.',
+ network: 'Jev a eu un souci technique sur ce round.',
+ rejected: 'Jev n’a pas pu analyser ces images.',
+ invalid: 'Jev a renvoyé une réponse inutilisable.',
+};
 
 function screen(id) { document.body.classList.toggle('in-game', id === 'game'); for (const s of ['home','game','finish']) $(s).hidden = s !== id; }
 function enableChoices() { document.querySelectorAll('[data-choice]').forEach(b => b.disabled = busy || view.chosen || !loaded.every(Boolean)); }
@@ -27,7 +52,7 @@ function render(v) {
  $('jev-status').textContent = v.ready ? 'Jev a choisi' : 'Jev cherche…';
  if (fresh) {
   loaded = [false,false]; selectedChoice = null;
-  for (let i=0;i<2;i++) { const img = $(`image-${i}`); img.onload = () => {if (view.roundId !== v.roundId) return; loaded[i] = true; enableChoices();}; img.onerror = () => showError(new Error('Image indisponible. Relance la partie.')); img.src = v.images[i]; }
+  for (let i=0;i<2;i++) { const img = $(`image-${i}`); img.onload = () => {if (view.roundId !== v.roundId) return; loaded[i] = true; enableChoices();}; img.onerror = () => { if (view.roundId === v.roundId) showError(new Error('Une image n’a pas pu être chargée.'), {retry: true}); }; img.src = v.images[i]; }
  }
  for (let i=0;i<2;i++) {
   const picked = v.reveal ? v.reveal.player === i : selectedChoice === i;
@@ -45,27 +70,37 @@ function render(v) {
   const r = v.reveal;
   $('jev-status').textContent = r.unavailable ? 'Jev indisponible' : 'Jev a choisi';
   $('reveal-title').textContent = `${r.humanPoints ? 'Bien vu' : 'Raté'}, l’image IA était la ${r.truth === 0 ? 'A' : 'B'}.`;
-  const jev = r.unavailable ? 'Jev n’a pas répondu à temps.' : `Jev ${r.jevPoints ? 'a vu juste' : 's’est trompé'} en ${seconds(r.totalMs)}.`;
+  const jev = r.unavailable ? (JEV_SILENCE[r.reason] || 'Jev n’a pas pu répondre.')
+   : r.jev < 0 ? `Jev n’a pas su trancher entre les deux images (${seconds(r.totalMs)}).`
+   : `Jev ${r.jevPoints ? 'a vu juste' : 's’est trompé'} en ${seconds(r.totalMs)}.`;
   $('reveal-detail').textContent = `${jev} Toi, tu as mis ${seconds(r.playerMs)}.`;
   $('next').textContent = v.number === 5 ? 'Voir le résultat final' : 'Round suivant';
   if (poll) {clearTimeout(poll); poll = null;}
  }
 }
-function schedulePoll(e) {
+// Suivi du round : 450 ms tant que tout va bien, puis de plus en plus espacé en cas d'erreur (5 s au plus).
+// Après plusieurs échecs, le joueur peut relancer une partie.
+function schedulePoll(e, failures = 0) {
  clearTimeout(poll);
  if (e !== epoch || !view || view.reveal) return;
  poll = setTimeout(async () => {
-  try { const v = await api('round'); if (e !== epoch) return; render(v); schedulePoll(e); }
-  catch (err) { if(e === epoch) {showError(err); if(err.status === 401) { leave(); showError(err); } else if(view && !view.reveal) schedulePoll(e);} }
- }, 450);
+  try { const v = await api('round'); if (e !== epoch) return; if (transientError) hideError(); render(v); schedulePoll(e); }
+  catch (err) {
+   if (e !== epoch) return;
+   if (err.status === 401) { leave(); showError(err); return; }
+   showError(err, {transient: true, retry: failures >= 3});
+   if (view && !view.reveal) schedulePoll(e, failures + 1);
+  }
+ }, failures ? Math.min(5000, 450 * 2 ** failures) : 450);
 }
 async function start() {
  if (busy) return; busy=true; epoch++; clearTimeout(poll); const e=epoch;
- $('error').hidden=true; $('start').disabled=true;
+ hideError(); $('start').disabled=true;
  try {const v=await api('games',{}); view=null; screen('game'); render(v); $('round-title').tabIndex=-1; $('round-title').focus(); schedulePoll(e);}
  catch(err){showError(err);} finally {busy=false; if(view) enableChoices(); await config();}
 }
 $('start').onclick = start;
+$('error-retry').onclick = () => { hideError(); start(); };
 document.querySelectorAll('[data-choice]').forEach(b => b.onclick = async () => {
  if (busy || view.chosen || !loaded.every(Boolean)) return;
  busy=true; clearTimeout(poll); const e=++epoch; const id=view.roundId;
@@ -77,7 +112,7 @@ document.querySelectorAll('[data-choice]').forEach(b => b.onclick = async () => 
 $('next').onclick = async () => {
  if(busy || !view.reveal) return;
  if(view.number === 5) {finish();return;}
- busy=true; enableChoices(); $('next').disabled=true; const e=++epoch; clearTimeout(poll); $('error').hidden=true;
+ busy=true; enableChoices(); $('next').disabled=true; const e=++epoch; clearTimeout(poll); hideError();
  try {const v=await api('next',{roundId:view.roundId});render(v);$('round-title').focus();schedulePoll(e);}catch(err){showError(err);try{render(await api('round'));schedulePoll(e);}catch{}}finally{busy=false;$('next').disabled=false;enableChoices();}
 };
 function finish() {
@@ -89,7 +124,7 @@ function finish() {
  $('finish').focus();
 }
 $('replay').onclick = start;
-function leave() { epoch++; clearTimeout(poll); screen('home'); config(); $('error').hidden=true; $('start').focus(); if ($('teaser-1').complete) animateLens($('teaser-1')); }
+function leave() { epoch++; clearTimeout(poll); screen('home'); config(); hideError(); $('start').focus(); if ($('teaser-1').complete) animateLens($('teaser-1')); }
 async function config() {
  try {
   const c=await api('config'); $('start').disabled=!c.live;
