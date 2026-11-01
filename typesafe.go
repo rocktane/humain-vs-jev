@@ -8,9 +8,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net"
 	"net/http"
+	"regexp"
+	"strconv"
+	"sync"
+	"time"
 )
 
 // Causes d'échec d'une analyse, transmises au front pour un message juste.
@@ -28,12 +33,17 @@ const (
 
 // JevError classe une erreur d'analyse. Le corps de la réponse n'y figure jamais.
 type JevError struct {
-	Reason string
-	Status int
-	Err    error
+	Reason     string
+	Status     int
+	Code       string        // code d'erreur court renvoyé par TypeSafe, s'il en donne un
+	RetryAfter time.Duration // délai demandé par TypeSafe avant un nouvel essai
+	Err        error
 }
 
 func (e *JevError) Error() string {
+	if e.Status != 0 && e.Code != "" {
+		return fmt.Sprintf("TypeSafe %s (HTTP %d, %s)", e.Reason, e.Status, e.Code)
+	}
 	if e.Status != 0 {
 		return fmt.Sprintf("TypeSafe %s (HTTP %d)", e.Reason, e.Status)
 	}
@@ -119,7 +129,7 @@ func (c *TypeSafe) Analyze(ctx context.Context, data []byte) (Estimate, error) {
 	defer resp.Body.Close()
 	// Never log the provider body, which could echo request data or credentials.
 	if resp.StatusCode != http.StatusOK {
-		return Estimate{}, &JevError{Reason: statusReason(resp.StatusCode), Status: resp.StatusCode}
+		return Estimate{}, &JevError{Reason: statusReason(resp.StatusCode), Status: resp.StatusCode, Code: errorCode(resp.Body), RetryAfter: retryAfter(resp.Header.Get("Retry-After"))}
 	}
 	var result struct {
 		Model   string `json:"model"`
@@ -138,7 +148,58 @@ func (c *TypeSafe) Analyze(ctx context.Context, data []byte) (Estimate, error) {
 	if !ok || a.Type != "noul" || a.Noul == nil || math.IsNaN(*a.Noul) || math.IsInf(*a.Noul, 0) || *a.Noul < 0 || *a.Noul > 1 || result.Model == "" {
 		return Estimate{}, &JevError{Reason: ReasonInvalid, Err: errors.New("réponse Noul manquante ou invalide")}
 	}
+	warnModel(c.Model, result.Model)
 	return Estimate{*a.Noul, result.Model}, nil
+}
+
+// Un code d'erreur n'est retenu que s'il ressemble à un identifiant : jamais de texte libre,
+// qui pourrait reprendre des données de la requête.
+var codePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,64}$`)
+
+// errorCode extrait le code d'une réponse d'erreur TypeSafe (4 Kio lus au plus).
+func errorCode(body io.Reader) string {
+	var e struct {
+		Code  any `json:"code"`
+		Type  any `json:"type"`
+		Error any `json:"error"`
+	}
+	if json.NewDecoder(io.LimitReader(body, 4<<10)).Decode(&e) != nil {
+		return ""
+	}
+	candidates := []any{e.Code, e.Type}
+	if nested, ok := e.Error.(map[string]any); ok {
+		candidates = append([]any{nested["code"], nested["type"]}, candidates...)
+	} else {
+		candidates = append(candidates, e.Error)
+	}
+	for _, c := range candidates {
+		if s, ok := c.(string); ok && codePattern.MatchString(s) {
+			return s
+		}
+	}
+	return ""
+}
+
+// retryAfter lit un Retry-After en secondes ; au-delà de 5 s, attendre n'a pas de sens dans un round.
+func retryAfter(h string) time.Duration {
+	n, err := strconv.Atoi(h)
+	if err != nil || n <= 0 || n > 5 {
+		return 0
+	}
+	return time.Duration(n) * time.Second
+}
+
+var warnedModels sync.Map
+
+// warnModel signale une fois chaque modèle inattendu. Les alias (jev-latest, jev-preview)
+// désignent par nature une autre version : seuls les noms fixes sont comparés.
+func warnModel(asked, got string) {
+	if asked == got || asked == "jev-latest" || asked == "jev-preview" {
+		return
+	}
+	if _, seen := warnedModels.LoadOrStore(got, true); !seen {
+		log.Printf("TypeSafe répond avec le modèle %q au lieu de %q", got, asked)
+	}
 }
 
 // -1 means abstention: exactly equal estimates must not break a tie.
