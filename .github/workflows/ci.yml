@@ -18,7 +18,7 @@ jobs:
 
       # go.mod fixe la version minimale ; on teste et on compile avec la dernière
       # version stable pour profiter des correctifs de sécurité de la bibliothèque standard.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
 
